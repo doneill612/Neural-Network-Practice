@@ -6,12 +6,11 @@ testSet = np.array(([0, 0], [1, 0], [0, 1], [1, 1], [1, 0], [0, 1], [0, 0]), dty
 testAnswers = np.array(([0], [1], [1], [0], [1], [1], [0]), dtype=int)
 results = np.array(([1], [0], [0], [0], [1], [1], [0]), dtype=int)
 
-def sigmoid(z):
-    return 1 / (1 + np.exp(-z))
-
-def sigmoidPrime(z):
-    #    return np.exp(-z) / ((1 + np.exp(-z)) ** 2)
-    return sigmoid(z) * (1 - sigmoid(z))
+def sigmoid(z, derivative = False):
+    val = 1 / (1 + np.exp(-z))
+    if derivative:
+        return val * (1 - val)
+    return val
 
 class Network(object):
     def __init__(self):
@@ -25,7 +24,7 @@ class Network(object):
         self.w1 = np.random.randn(self.inputLayerSize, self.hiddenLayerSize)
         self.w2 = np.random.randn(self.hiddenLayerSize, self.outputLayersize)
 
-        self.reg = 0.0001
+        self.lmda = 0.0001
 
         self.z2 = None
         self.a2 = None
@@ -49,17 +48,17 @@ class Network(object):
     def cost(self):
         self.feedForward()
         J = 0.5 * sum((self.Y - self.yHat) ** 2) / self.X.shape[0] + \
-            (self.reg / 2) * (np.sum(self.w1 ** 2) + np.sum(self.w2 ** 2))
+            (self.lmda / 2) * (np.sum(self.w1 ** 2) + np.sum(self.w2 ** 2))
         return J
 
     def backProp(self):
         self.feedForward()
 
-        delta3 = np.multiply(-(self.Y - self.yHat), sigmoidPrime(self.z3))
-        dJdW2 = (np.dot(self.a2.T, delta3) / self.X.shape[0]) + self.reg * self.w2
+        delta3 = np.multiply(-(self.Y - self.yHat), sigmoid(self.z3, derivative = True))
+        dJdW2 = (np.dot(self.a2.T, delta3) / self.X.shape[0]) + self.lmda * self.w2
 
-        delta2 = np.dot(delta3, self.w2.T) * sigmoidPrime(self.z2)
-        dJdW1 = (np.dot(self.X.T, delta2) / self.X.shape[0]) + self.reg * self.w1
+        delta2 = np.dot(delta3, self.w2.T) * sigmoid(self.z2, derivative = True)
+        dJdW1 = (np.dot(self.X.T, delta2) / self.X.shape[0]) + self.lmda * self.w1
 
         return dJdW1, dJdW2
 
