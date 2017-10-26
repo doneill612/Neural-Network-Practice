@@ -12,6 +12,9 @@ import numpy as np
 import tensorflow as tf
 from six.moves import urllib
 
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+
 url = 'http://mattmahoney.net/dc/{}'
 
 flags = tf.app.flags
@@ -36,6 +39,7 @@ flags.DEFINE_integer('num_sampled', 64, 'Negative examples to sample.'
 
 def download_dataset(filename, expected_bytes):
     """Retrieve the dataset"""
+    print('Fetching data from remote...')
     if not os.path.exists(filename):
         filename, _ = urllib.request.urlretrieve(url.format(filename), filename)
     statinfo = os.stat(filename)
@@ -106,7 +110,7 @@ def generate_batch(data, batch_size, num_skips, skip_window):
     data_index = (data_index + len(data) - span) % len(data)
     return batch, labels
 
-def build_graph(vocabulary_size, embedding_size):
+def build_graph(vocabulary_size):
     """Build the TensorFlow computation graph"""
     valid_examples = np.random.choice(FLAGS.valid_window,
                                       FLAGS.valid_size,
@@ -117,14 +121,16 @@ def build_graph(vocabulary_size, embedding_size):
 
         training_inputs = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
         training_labels = tf.placeholder(tf.int32, shape=[FLAGS.batch_size, 1])
+        tf.add_to_collection('training_inputs', training_inputs)
+        tf.add_to_collection('training_labels', training_labels)
         validation_set = tf.constant(valid_examples, dtype=tf.int32)
 
         embeddings = tf.Variable(
-            tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
+            tf.random_uniform([vocabulary_size, FLAGS.embedding_size], -1.0, 1.0))
         lookup = tf.nn.embedding_lookup(embeddings, training_inputs)
         weights = tf.Variable(
-                tf.truncated_normal([vocabulary_size, embedding_size],
-                                    stddev=1.0 / math.sqrt(embedding_size)))
+                tf.truncated_normal([vocabulary_size, FLAGS.embedding_size],
+                                    stddev=1.0 / math.sqrt(FLAGS.embedding_size)))
         biases = tf.Variable(tf.zeros([vocabulary_size]))
 
         cost = tf.reduce_mean(tf.nn.nce_loss(weights=weights,
@@ -145,13 +151,67 @@ def build_graph(vocabulary_size, embedding_size):
         similarity = tf.matmul(validation_embeddings, normalized_embeddings,
                                transpose_b=True)
         tf.add_to_collection('similarity', similarity)
-        return graph
+        return graph, normalized_embeddings, valid_examples
 
-def train_model(graph):
+def train_model(vocabulary_size, inverse_mapping, data):
     """Trains a model given a computation graph"""
-    with tf.Session(graph=graph):
-        # TODO implement
+    graph, normalized_embeddings, valid_examples = (
+            build_graph(vocabulary_size))
+    with tf.Session(graph=graph) as sess:
+        training_inputs = graph.get_collection('training_inputs')[0]
+        training_labels = graph.get_collection('training_labels')[0]
+        train_op = graph.get_collection('train_op')[0]
+        cost = graph.get_collection('cost')[0]
+        similarity = graph.get_collection('similarity')[0]
+        average_loss = 0
+        sess.run(tf.global_variables_initializer())
+        for step in range(FLAGS.training_steps):
+            batch_inputs, batch_labels = generate_batch(data, FLAGS.batch_size,
+                                                        FLAGS.num_skips,
+                                                        FLAGS.skip_window)
+            feed_dict = {training_inputs: batch_inputs,
+                         training_labels: batch_labels}
+            _, _cost = sess.run([train_op, cost], feed_dict=feed_dict)
+            average_loss += _cost
+            if step > 0 and step % 2000 == 0:
+                average_loss /= 2000
+                tf.logging.info('Average loss at step %d = %.3f',
+                                step, average_loss)
+                average_loss = 0
+            if step > 0 and step % 10000 == 0:
+                sim = similarity.eval()
+                for i in range(FLAGS.valid_size):
+                    valid_word = inverse_mapping[valid_examples[i]]
+                    top_k = 8
+                    nearest = (-sim[i, :]).argsort()[1:top_k + 1]
+                    log_str = 'Nearest to {}'.format(valid_word)
+                    for k in range(top_k):
+                        close_word = inverse_mapping[nearest[k]]
+                        tf.logging.info('%s %s, ' % (log_str, close_word))
+                    print(log_str)
+        final_embeddings = normalized_embeddings.eval()
+        plot_results(final_embeddings, inverse_mapping)
         return None
+
+def plot_results(final_embeddings, inverse_mapping, filename='tsne.png'):
+    """Use Matplotlib to plot results"""
+    tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method='exact')
+    plot_only = 500
+    low_dim_embs = tsne.fit_transform(final_embeddings[:plot_only, :])
+    labels = [inverse_mapping[i] for i in range(plot_only)]
+    assert low_dim_embs.shape[0] >= len(labels), 'More labels than embeddings'
+    plt.figure(figsize=(18, 18))  # in inches
+    for i, label in enumerate(labels):
+        x, y = low_dim_embs[i, :]
+        plt.scatter(x, y)
+        plt.annotate(label,
+                     xy=(x, y),
+                     xytext=(5, 2),
+                     textcoords='offset points',
+                     ha='right',
+                     va='bottom')
+
+    plt.savefig(filename)
 
 def main(argv=None):
     """Application entry point"""
@@ -163,20 +223,7 @@ def main(argv=None):
     del vocabulary
     print('Most common words (including UNK)', count[:5])
     print('Sample data', data[:10], [inverse_mapping[i] for i in data[:10]])
+    train_model(vocabulary_size, inverse_mapping, data)
 
-'''
-def maybe_download(filename, expected_bytes):
-  """Download a file if not present, and make sure it's the right size."""
-  if not os.path.exists(filename):
-    filename, _ = urllib.request.urlretrieve(url + filename, filename)
-  statinfo = os.stat(filename)
-  if statinfo.st_size == expected_bytes:
-    print('Found and verified', filename)
-  else:
-    print(statinfo.st_size)
-    raise Exception(
-        'Failed to verify ' + filename + '. Can you get to it with a browser?')
-  return filename
-
-filename = maybe_download('text8.zip', 31344016)
-'''
+if __name__ == '__main__':
+    tf.app.run(main=main)
