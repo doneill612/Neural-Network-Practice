@@ -1,3 +1,7 @@
+"""
+Adapted from TensorFlow word2vec tutorial found online at
+https://www.tensorflow.org/tutorials/word2vec
+"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -56,9 +60,6 @@ def read_dataset(filename):
         data = tf.compat.as_str(f.read(f.namelist()[0])).split()
     return data
 
-def __inverse_of(mapping):
-    return dict(zip(mapping.values(), mapping.keys()))
-
 def build_dataset(words, n_words):
     """Converts the raw data into a workable dataset"""
     count = [['UNK', -1]]
@@ -76,31 +77,31 @@ def build_dataset(words, n_words):
             unk_count += 1
         data.append(index)
     count[0][1] = unk_count
-    inverse_mapping = __inverse_of(mapping)
+    inverse_mapping = dict(zip(mapping.values(), mapping.keys()))
     return data, count, mapping, inverse_mapping
 
 data_index = 0
 
-def generate_batch(data, batch_size, num_skips, skip_window):
+def generate_batch(data):
     """Obtain a training batch for skip-gram model"""
     global data_index
-    batch = np.ndarray(shape=(batch_size), dtype=np.int32)
-    labels = np.ndarray(shape=(batch_size, 1), dtype=np.int32)
-    span = 2 * skip_window + 1
+    batch = np.ndarray(shape=(FLAGS.batch_size), dtype=np.int32)
+    labels = np.ndarray(shape=(FLAGS.batch_size, 1), dtype=np.int32)
+    span = 2 * FLAGS.skip_window + 1
     buf = collections.deque(maxlen=span)
     if data_index + span > len(data):
         data_index = 0
     buf.extend(data[data_index:data_index + span])
     data_index += span
-    for i in range(batch_size // num_skips):
-        target = skip_window
-        targets_to_avoid = [skip_window]
-        for j in range(num_skips):
+    for i in range(FLAGS.batch_size // FLAGS.num_skips):
+        target = FLAGS.skip_window
+        targets_to_avoid = [FLAGS.skip_window]
+        for j in range(FLAGS.num_skips):
             while target in targets_to_avoid:
                 target = random.randint(0, span - 1)
             targets_to_avoid.append(target)
-            batch[i * num_skips + j] = buf[skip_window]
-            labels[i * num_skips + j, 0] = buf[target]
+            batch[i * FLAGS.num_skips + j] = buf[FLAGS.skip_window]
+            labels[i * FLAGS.num_skips + j, 0] = buf[target]
         if data_index == len(data):
             buf[:] = data[:span]
             data_index = span
@@ -166,9 +167,7 @@ def train_model(vocabulary_size, inverse_mapping, data):
         average_loss = 0
         sess.run(tf.global_variables_initializer())
         for step in range(FLAGS.training_steps):
-            batch_inputs, batch_labels = generate_batch(data, FLAGS.batch_size,
-                                                        FLAGS.num_skips,
-                                                        FLAGS.skip_window)
+            batch_inputs, batch_labels = generate_batch(data)
             feed_dict = {training_inputs: batch_inputs,
                          training_labels: batch_labels}
             _, _cost = sess.run([train_op, cost], feed_dict=feed_dict)
@@ -191,7 +190,6 @@ def train_model(vocabulary_size, inverse_mapping, data):
                     print(log_str)
         final_embeddings = normalized_embeddings.eval()
         plot_results(final_embeddings, inverse_mapping)
-        return None
 
 def plot_results(final_embeddings, inverse_mapping, filename='tsne.png'):
     """Use Matplotlib to plot results"""
